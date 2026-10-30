@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 // Shared IPC data contracts; no main-process implementation is exposed to the UI.
 import type { Project, ProjectConfig, PortStatus } from '../shared/types'
 
+const DEFAULT_PROJECT_PORT = 5173
 const currentDir = fileURLToPath(new URL('.', import.meta.url))
 const nodeRequire = createRequire(import.meta.url)
 const Store = nodeRequire('electron-store').default as typeof import('electron-store').default
@@ -24,6 +25,10 @@ const store = new Store<{ projects: ProjectConfig[] }>({
     defaults: { projects: [] }
 })
 const processes = new Map<string, pty.IPty>()
+const browserOpenRequests = new Map<string, symbol>()
+const serverOutputBuffers = new Map<string, string>()
+const reservedProjectPorts = new Set<number>()
+const projectPorts = new Map<string, number>()
 let mainWindow: BrowserWindow | null = null
 
 function storedProjects(): ProjectConfig[] {
@@ -47,6 +52,21 @@ function emitProjectNotice(projectId: string, message: string): void {
     mainWindow?.webContents.send('project:notice', { projectId, message })
 }
 
+function isDevPilotRendererPort(port: number): boolean {
+    const rendererUrl = process.env.ELECTRON_RENDERER_URL
+    if (!rendererUrl) return false
+
+    try {
+        const parsed = new URL(rendererUrl)
+        const rendererPort = Number(parsed.port || (parsed.protocol === 'https:' ? 443 : 80))
+        return ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname) && rendererPort === port
+    } catch (error) {
+        throw new Error(
+            `Invalid Electron renderer URL: ${error instanceof Error ? error.message : 'invalid URL'}`
+        )
+    }
+}
+
 function waitForPort(port: number, timeoutMs: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMs
 
@@ -57,32 +77,45 @@ function waitForPort(port: number, timeoutMs: number): Promise<boolean> {
                 return
             }
 
-            const socket = createConnection({ port, host: '127.0.0.1' })
-            const finish = (ready: boolean) => {
-                socket.destroy()
-                if (ready) resolve(true)
-                else setTimeout(attempt, 350)
+            const tryHost = (hosts: string[], index: number) => {
+                const socket = createConnection({ port, host: hosts[index] })
+                let settled = false
+                const finish = (ready: boolean) => {
+                    if (settled) return
+                    settled = true
+                    socket.destroy()
+                    if (ready) resolve(true)
+                    else if (index + 1 < hosts.length) tryHost(hosts, index + 1)
+                    else setTimeout(attempt, 350)
+                }
+
+                socket.setTimeout(500)
+                socket.once('connect', () => finish(true))
+                socket.once('timeout', () => finish(false))
+                socket.once('error', () => finish(false))
             }
 
-            socket.setTimeout(500)
-            socket.once('connect', () => finish(true))
-            socket.once('timeout', () => finish(false))
-            socket.once('error', () => finish(false))
+            tryHost(['127.0.0.1', '::1'], 0)
         }
 
         attempt()
     })
 }
 
-async function openProjectInBrowser(project: ProjectConfig): Promise<void> {
+async function openProjectInBrowser(project: ProjectConfig, requestId: symbol): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    if (browserOpenRequests.get(project.id) !== requestId) return
+
     let targetUrl = ''
+    const outputUrl = findLocalServerUrl(serverOutputBuffers.get(project.id) ?? '')
     if (project.port) {
-        targetUrl = `http://localhost:${project.port}`
-        const ready = await waitForPort(project.port, 60_000)
+        targetUrl = outputUrl?.url ?? `http://localhost:${project.port}`
+        const ready = await waitForPort(outputUrl?.port ?? project.port, 120_000)
         if (!ready) {
+            if (browserOpenRequests.get(project.id) !== requestId) return
             emitProjectNotice(
                 project.id,
-                `Project did not respond on port ${project.port} within 60 seconds.`
+                `Project did not respond on port ${outputUrl?.port ?? project.port} within 120 seconds. Check its start command and port.`
             )
             return
         }
@@ -96,8 +129,36 @@ async function openProjectInBrowser(project: ProjectConfig): Promise<void> {
         return
     }
 
-    if (!processes.has(project.id)) return
+    await openBrowserTarget(project.id, requestId, targetUrl)
+}
+
+async function openBrowserTarget(projectId: string, requestId: symbol, targetUrl: string): Promise<void> {
+    if (browserOpenRequests.get(projectId) !== requestId) return
+    const parsedUrl = new URL(targetUrl)
+    if (isDevPilotRendererPort(Number(parsedUrl.port || 80))) {
+        throw new Error('Refusing to open DevPilot’s own renderer instead of the project app.')
+    }
+    browserOpenRequests.delete(projectId)
     await shell.openExternal(targetUrl)
+}
+
+function findLocalServerUrl(output: string): { url: string; port: number } | undefined {
+    const matches = output.match(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d{1,5})?/gi)
+    if (!matches) return undefined
+
+    for (const match of matches) {
+        try {
+            const parsed = new URL(match)
+            const port = Number(parsed.port || (parsed.protocol === 'https:' ? 443 : 80))
+            if (port < 1 || port > 65535) continue
+            if (isDevPilotRendererPort(port)) continue
+            parsed.hostname = 'localhost'
+            return { url: parsed.toString(), port }
+        } catch {
+            continue
+        }
+    }
+    return undefined
 }
 
 function getProject(id: string): ProjectConfig {
@@ -180,35 +241,6 @@ function detectCommand(projectPath: string): string {
     return `${manager} run ${script}`
 }
 
-function detectPort(projectPath: string): number | undefined {
-    const packagePath = join(projectPath, 'package.json')
-    if (!existsSync(packagePath)) return undefined
-
-    let manifest: {
-        scripts?: Record<string, unknown>
-        dependencies?: Record<string, unknown>
-        devDependencies?: Record<string, unknown>
-    }
-    try {
-        manifest = JSON.parse(readFileSync(packagePath, 'utf8')) as typeof manifest
-    } catch (error) {
-        throw new Error(
-            `Could not read package.json: ${error instanceof Error ? error.message : 'invalid JSON'}`
-        )
-    }
-
-    const scripts = Object.values(manifest.scripts ?? {}).filter(
-        (script): script is string => typeof script === 'string'
-    )
-    const dependencies = { ...manifest.dependencies, ...manifest.devDependencies }
-
-    if (dependencies.next || dependencies['react-scripts'] || dependencies.nuxt) return 3000
-    if (dependencies.vite || scripts.some((script) => /\bvite\b/.test(script))) return 5173
-    if (scripts.some((script) => /\bng\s+serve\b/.test(script))) return 4200
-
-    return undefined
-}
-
 type ProjectFramework = 'vite' | 'next' | 'react-scripts' | 'angular' | 'nuxt' | 'unknown'
 
 function detectFramework(projectPath: string): ProjectFramework {
@@ -257,25 +289,36 @@ function commandForPort(command: string, port: number, framework: ProjectFramewo
 
 async function isPortAvailable(port: number): Promise<boolean> {
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid port.')
-    return new Promise<boolean>((resolve, reject) => {
-        const server = createServer()
-        server.once('error', (error: NodeJS.ErrnoException) => {
-            if (error.code === 'EADDRINUSE') resolve(false)
-            else reject(error)
+    const canBindHost = (host: string) =>
+        new Promise<boolean>((resolve, reject) => {
+            const server = createServer()
+            server.once('error', (error: NodeJS.ErrnoException) => {
+                if (error.code === 'EADDRINUSE') resolve(false)
+                else reject(error)
+            })
+            server.listen(port, host, () => server.close((error) => (error ? reject(error) : resolve(true))))
         })
-        server.listen(port, '127.0.0.1', () =>
-            server.close((error) => (error ? reject(error) : resolve(true)))
-        )
-    })
+    const availability = await Promise.all([canBindHost('127.0.0.1'), canBindHost('::1')])
+    return availability.every(Boolean)
 }
 
 async function findAvailablePort(startingPort: number): Promise<number> {
     for (let port = startingPort; port <= Math.min(startingPort + 999, 65535); port += 1) {
-        if (await isPortAvailable(port)) return port
+        if (reservedProjectPorts.has(port) || isDevPilotRendererPort(port)) continue
+        if (!(await isPortAvailable(port)) || reservedProjectPorts.has(port)) continue
+        if (isDevPilotRendererPort(port)) continue
+        reservedProjectPorts.add(port)
+        return port
     }
     throw new Error(
         `No available port found between ${startingPort} and ${Math.min(startingPort + 999, 65535)}.`
     )
+}
+
+function releaseProjectPort(projectId: string): void {
+    const port = projectPorts.get(projectId)
+    if (port !== undefined) reservedProjectPorts.delete(port)
+    projectPorts.delete(projectId)
 }
 
 async function checkPort(port: number): Promise<PortStatus> {
@@ -333,7 +376,7 @@ ipcMain.handle('projects:choose', async () => {
         name: basename(path),
         path,
         command: detectCommand(path),
-        port: detectPort(path),
+        port: DEFAULT_PROJECT_PORT,
         envFile: '.env',
         envKey: 'VITE_API_BASE_URL',
         baseUrl: readBaseUrl({
@@ -377,30 +420,30 @@ ipcMain.handle('projects:remove', async (_event, id: string) => {
 })
 ipcMain.handle('process:start', async (_event, id: string) => {
     let project = getProject(id)
-    if (processes.has(id)) return { ok: true }
-    if (!existsSync(project.path)) throw new Error('The project folder no longer exists.')
-    if (!project.port) {
-        const detectedPort = detectPort(project.path)
-        if (detectedPort) {
-            project = { ...project, port: detectedPort }
-            store.set(
-                'projects',
-                storedProjects().map((item) => (item.id === id ? project : item))
-            )
+    if (processes.has(id)) {
+        const requestId = browserOpenRequests.get(id)
+        if (requestId) {
+            void openProjectInBrowser(project, requestId).catch((error: unknown) => {
+                const message =
+                    error instanceof Error ? error.message : 'Could not open the project in your browser.'
+                emitProjectNotice(project.id, message)
+            })
         }
+        return { ok: true }
     }
-    if (project.port) {
-        const availablePort = await findAvailablePort(project.port)
-        if (availablePort !== project.port) {
-            project = { ...project, port: availablePort }
-            store.set(
-                'projects',
-                storedProjects().map((item) => (item.id === id ? project : item))
-            )
-        }
+    if (!existsSync(project.path)) throw new Error('The project folder no longer exists.')
+    const availablePort = await findAvailablePort(DEFAULT_PROJECT_PORT)
+    projectPorts.set(id, availablePort)
+    if (availablePort !== project.port) {
+        project = { ...project, port: availablePort }
+        store.set(
+            'projects',
+            storedProjects().map((item) => (item.id === id ? project : item))
+        )
     }
     emitStatus({ ...project, status: 'starting' })
     try {
+        serverOutputBuffers.delete(id)
         const framework = detectFramework(project.path)
         const isWindows = process.platform === 'win32'
         const shellPath = isWindows ? process.env.ComSpec || 'cmd.exe' : process.env.SHELL || '/bin/bash'
@@ -409,7 +452,7 @@ ipcMain.handle('process:start', async (_event, id: string) => {
                 (entry): entry is [string, string] => typeof entry[1] === 'string'
             )
         )
-        if (project.port) processEnv.PORT = String(project.port)
+        processEnv.PORT = String(availablePort)
         const proc = pty.spawn(shellPath, isWindows ? ['/Q'] : ['-i'], {
             name: 'xterm-256color',
             cols: 100,
@@ -419,25 +462,63 @@ ipcMain.handle('process:start', async (_event, id: string) => {
             // The bundled ConPTY avoids AttachConsole failures from node-pty's cleanup helper in Electron.
             ...(isWindows ? { useConptyDll: true } : {})
         })
+        const requestId = Symbol(project.id)
+        browserOpenRequests.set(project.id, requestId)
         processes.set(id, proc)
         proc.onExit(({ exitCode }) => {
             processes.delete(id)
+            serverOutputBuffers.delete(id)
+            releaseProjectPort(id)
+            browserOpenRequests.delete(id)
             emitStatus({
                 ...project,
                 status: exitCode === 0 ? 'stopped' : 'error',
                 error: exitCode ? `Process exited with code ${exitCode}.` : undefined
             })
         })
+        proc.onData((data) => {
+            const output = `${serverOutputBuffers.get(id) ?? ''}${data}`.slice(-4096)
+            serverOutputBuffers.set(id, output)
+            const server = findLocalServerUrl(output)
+            if (!server) return
+
+            if (project.port !== server.port) {
+                const reservedPort = projectPorts.get(id)
+                if (reservedProjectPorts.has(server.port) && reservedPort !== server.port) {
+                    emitProjectNotice(
+                        id,
+                        `The project tried to use port ${server.port}, which is already assigned to another project.`
+                    )
+                    return
+                }
+                if (reservedPort !== undefined) reservedProjectPorts.delete(reservedPort)
+                reservedProjectPorts.add(server.port)
+                projectPorts.set(id, server.port)
+                project = { ...project, port: server.port }
+                store.set(
+                    'projects',
+                    storedProjects().map((item) => (item.id === id ? project : item))
+                )
+                emitStatus({ ...project, status: 'running', pid: proc.pid })
+            }
+
+            void openBrowserTarget(id, requestId, server.url).catch((error: unknown) => {
+                const message =
+                    error instanceof Error ? error.message : 'Could not open the project in your browser.'
+                emitProjectNotice(id, message)
+            })
+        })
         const command = detectCommand(project.path)
-        proc.write(`${project.port ? commandForPort(command, project.port, framework) : command}\r`)
+        proc.write(`${commandForPort(command, availablePort, framework)}\r`)
         emitStatus({ ...project, status: 'running', pid: proc.pid })
-        void openProjectInBrowser(project).catch((error: unknown) => {
+        void openProjectInBrowser(project, requestId).catch((error: unknown) => {
             const message =
                 error instanceof Error ? error.message : 'Could not open the project in your browser.'
             emitProjectNotice(project.id, message)
         })
         return { ok: true }
     } catch (error) {
+        releaseProjectPort(id)
         const message = error instanceof Error ? error.message : 'Unable to start the project.'
         setProjectError(project, message)
         return { ok: false, message }
@@ -445,11 +526,17 @@ ipcMain.handle('process:start', async (_event, id: string) => {
 })
 
 function stopProject(id: string): Promise<{ ok: boolean; message?: string }> {
+    browserOpenRequests.delete(id)
     const proc = processes.get(id)
-    if (!proc) return Promise.resolve({ ok: true })
+    if (!proc) {
+        releaseProjectPort(id)
+        return Promise.resolve({ ok: true })
+    }
     return new Promise((resolve) => {
         treeKill(proc.pid, 'SIGINT', (error) => {
             processes.delete(id)
+            releaseProjectPort(id)
+            serverOutputBuffers.delete(id)
             try {
                 proc.kill()
             } catch {
@@ -564,13 +651,6 @@ ipcMain.handle('projects:open-vscode', async (_event, id: string) => {
         )
     }
 })
-ipcMain.handle('app:open-url', async (_event, url: string) => {
-    if (typeof url !== 'string' || !/^https?:\/\//i.test(url.trim())) {
-        throw new Error('Only valid http and https URLs can be opened in the browser.')
-    }
-    await shell.openExternal(url.trim())
-})
-
 app.whenReady().then(() => {
     createWindow()
     app.on('activate', () => {

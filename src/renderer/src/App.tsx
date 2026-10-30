@@ -1,16 +1,5 @@
 import { useState } from 'react'
-import {
-    Check,
-    ExternalLink,
-    FolderOpen,
-    LoaderCircle,
-    Plus,
-    Power,
-    Search,
-    Square,
-    Trash2,
-    X
-} from 'lucide-react'
+import { Check, Code2, Copy, LoaderCircle, Plus, Power, Search, Square, Trash2, X } from 'lucide-react'
 import type { Project, ProjectConfig } from '../../shared/types'
 import { useProjects } from './hooks/useProjects'
 
@@ -22,8 +11,7 @@ function ProjectCard({
     onStart,
     onStop,
     onRemove,
-    onOpenBrowser,
-    onOpenFolder,
+    onOpenVSCode,
     onSave,
     onMessage
 }: {
@@ -34,8 +22,7 @@ function ProjectCard({
     onStart: () => void
     onStop: () => void
     onRemove: () => void
-    onOpenBrowser: () => void
-    onOpenFolder: () => void
+    onOpenVSCode: () => void
     onSave: (project: ProjectConfig) => Promise<void>
     onMessage: (message: string) => void
 }) {
@@ -105,11 +92,8 @@ function ProjectCard({
                 </span>
             </div>
 
-            <div className="mt-4 border-t border-border/70 pt-3">
+            <div className="mt-4">
                 <div className="mb-2 flex items-center justify-between gap-2">
-                    <label className="text-xs font-medium text-muted-foreground" htmlFor={inputId}>
-                        Environment URL
-                    </label>
                     <span className="truncate font-mono text-[11px] text-muted-foreground">
                         {project.envKey || 'VITE_API_BASE_URL'}
                     </span>
@@ -134,65 +118,84 @@ function ProjectCard({
                 </div>
             </div>
 
-            <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-border/70 pt-4">
-                {isRunning ? (
+            <div className="mt-auto">
+                {isRunning && project.port && (
+                    <div className="mb-3 flex min-w-0 items-center gap-2 rounded-lg bg-background/80 px-2.5 py-2 text-xs">
+                        <span className="size-1.5 shrink-0 rounded-full bg-green-500" />
+                        <span className="truncate font-mono text-foreground">
+                            http://localhost:{project.port}
+                        </span>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                const url = `http://localhost:${project.port}`
+                                void navigator.clipboard
+                                    .writeText(url)
+                                    .then(() => onMessage(`Copied ${url}`))
+                                    .catch((error: unknown) =>
+                                        onMessage(
+                                            error instanceof Error
+                                                ? `Could not copy URL: ${error.message}`
+                                                : 'Could not copy URL.'
+                                        )
+                                    )
+                            }}
+                            className="ml-auto inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            title="Copy local URL"
+                            aria-label={`Copy http://localhost:${project.port}`}
+                        >
+                            <Copy size={14} />
+                        </button>
+                    </div>
+                )}
+                <div className="flex flex-wrap items-center gap-2 mt-3">
+                    {isRunning ? (
+                        <button
+                            type="button"
+                            disabled={busy}
+                            onClick={onStop}
+                            className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-blue-600 px-3 text-sm font-medium text-white transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                        >
+                            {busy ? (
+                                <LoaderCircle size={14} className="animate-spin" />
+                            ) : (
+                                <Square size={12} fill="currentColor" />
+                            )}
+                            Stop
+                        </button>
+                    ) : (
+                        <button
+                            type="button"
+                            disabled={busy || isStarting}
+                            onClick={onStart}
+                            className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-green-600 px-3 text-sm font-medium text-white transition-colors hover:bg-green-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                        >
+                            {busy || isStarting ? (
+                                <LoaderCircle size={14} className="animate-spin" />
+                            ) : (
+                                <Power size={14} />
+                            )}
+                            {isStarting ? 'Starting…' : 'Start'}
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        onClick={onOpenVSCode}
+                        className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    >
+                        <Code2 size={15} />
+                        Open in VS Code
+                    </button>
                     <button
                         type="button"
                         disabled={busy}
-                        onClick={onStop}
-                        className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-red-600 px-3 text-sm font-medium text-white transition-colors hover:bg-red-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                        onClick={onRemove}
+                        className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-red-600 px-3 text-sm font-medium text-white transition-colors hover:bg-red-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
                     >
-                        {busy ? (
-                            <LoaderCircle size={14} className="animate-spin" />
-                        ) : (
-                            <Square size={12} fill="currentColor" />
-                        )}
-                        Stop
+                        <Trash2 size={15} />
+                        Delete
                     </button>
-                ) : (
-                    <button
-                        type="button"
-                        disabled={busy || isStarting}
-                        onClick={onStart}
-                        className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-green-600 px-3 text-sm font-medium text-white transition-colors hover:bg-green-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-                    >
-                        {busy || isStarting ? (
-                            <LoaderCircle size={14} className="animate-spin" />
-                        ) : (
-                            <Power size={14} />
-                        )}
-                        {isStarting ? 'Starting…' : 'Start'}
-                    </button>
-                )}
-                <button
-                    type="button"
-                    onClick={onOpenFolder}
-                    className="inline-flex size-9 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2"
-                    title="Open project in VS Code"
-                    aria-label={`Open ${project.name} in VS Code`}
-                >
-                    <FolderOpen size={15} />
-                </button>
-                <button
-                    type="button"
-                    disabled={busy}
-                    onClick={onRemove}
-                    className="inline-flex size-9 items-center justify-center rounded-lg border bg-background border-transparent text-red-600 transition-colors hover:border-red-200 hover:bg-red-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-                    title="Remove project"
-                    aria-label={`Remove ${project.name} from DevPilot`}
-                >
-                    <Trash2 size={15} />
-                </button>
-                {(project.port || project.baseUrl) && (
-                    <button
-                        type="button"
-                        onClick={onOpenBrowser}
-                        className="ml-auto inline-flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2"
-                    >
-                        <ExternalLink size={14} />
-                        Open app
-                    </button>
-                )}
+                </div>
             </div>
         </article>
     )
@@ -226,39 +229,19 @@ function App() {
         addProject,
         startProject,
         stopProject,
+        stopAllProjects,
         removeProject,
-        openInBrowser,
         openInVSCode,
         saveProject
     } = useProjects(search)
-    const runningCount = projects.filter((project) => project.status === 'running').length
-
     return (
         <div className="flex min-h-screen min-w-0 flex-col bg-background font-sans text-foreground">
-            <header className="sticky top-0 z-30 border-b border-border/80 bg-background/95 backdrop-blur">
-                <div className="mx-auto flex h-[68px] w-full max-w-[1800px] items-center justify-between px-4 sm:px-6 lg:px-10">
-                    <div className="flex items-center gap-3">
-                        <BrandMark />
-                        <div>
-                            <p className="text-[17px] font-bold leading-5 tracking-tight">DevPilot</p>
-                            <p className="mt-0.5 text-[11px] font-medium tracking-wide text-muted-foreground">
-                                LOCAL DEVELOPMENT
-                            </p>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-2 rounded-full bg-secondary px-3 py-1.5 text-xs font-medium text-muted-foreground">
-                        <span className="size-2 rounded-full bg-green-500" />
-                        {runningCount} running
-                    </div>
-                </div>
-            </header>
-
             <main className="mx-auto flex w-full max-w-[1800px] flex-1 flex-col gap-7 px-4 py-7 sm:px-6 sm:py-9 lg:gap-9 lg:px-10">
                 <section className="flex flex-col items-stretch justify-between gap-5 sm:flex-row sm:items-end">
                     <div>
                         <p className="text-xs font-semibold uppercase text-primary">Your workspace</p>
                         <h1 className="mt-1.5 text-xl font-bold tracking-tight sm:text-2xl">
-                            Everything in one place.
+                            Everything In One Place.
                         </h1>
                         <p className="max-w-xl leading-5 text-muted-foreground text-sm sm:leading-6">
                             Launch your projects, manage environment URLs, and jump straight into your work.
@@ -266,10 +249,10 @@ function App() {
                     </div>
                     <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto sm:gap-3">
                         {projects.length > 0 && (
-                            <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-xl border border-input bg-card px-3 text-muted-foreground transition focus-within:border-ring focus-within:ring-1 focus-within:ring-ring sm:w-64 sm:flex-none">
+                            <label className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-input bg-card px-3 text-muted-foreground transition focus-within:border-ring focus-within:ring-1 focus-within:ring-ring sm:w-64 sm:flex-none">
                                 <Search size={16} className="shrink-0" />
                                 <input
-                                    className="h-8 w-full min-w-0 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                                    className="h-6 w-full min-w-0 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
                                     value={search}
                                     onChange={(event) => setSearch(event.target.value)}
                                     placeholder="Search projects…"
@@ -277,32 +260,48 @@ function App() {
                                 />
                             </label>
                         )}
-                        <button
-                            className="inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2"
-                            onClick={() => void addProject()}
-                        >
-                            <Plus size={16} />
-                            <span className="hidden sm:inline">Add project</span>
-                            <span className="sm:hidden">Add</span>
-                        </button>
+                        <div className="flex shrink-0 items-center gap-2">
+                            {projects.some(
+                                (project) => project.status === 'running' || project.status === 'starting'
+                            ) && (
+                                <button
+                                    type="button"
+                                    disabled={busyProjectId !== null}
+                                    className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-red-600 px-3 text-sm font-semibold text-white transition-colors hover:bg-red-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                                    onClick={() => void stopAllProjects()}
+                                >
+                                    <Square size={13} fill="currentColor" />
+                                    <span className="hidden sm:inline">Stop all</span>
+                                    <span className="sm:hidden">Stop</span>
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-primary px-3 text-sm font-semibold text-primary-foreground transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2"
+                                onClick={() => void addProject()}
+                            >
+                                <Plus size={16} />
+                                <span className="hidden sm:inline">Add Project</span>
+                                <span className="sm:hidden">Add</span>
+                            </button>
+                        </div>
                     </div>
                 </section>
 
                 {filteredProjects.length > 0 && (
                     <section aria-label="Projects">
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                             {filteredProjects.map((project) => (
                                 <ProjectCard
                                     key={project.id}
                                     project={project}
                                     selected={project.id === activeProjectId}
-                                    busy={busyProjectId === project.id}
+                                    busy={busyProjectId === project.id || busyProjectId === 'all'}
                                     onSelect={() => setActiveProject(project.id)}
                                     onStart={() => void startProject(project)}
                                     onStop={() => void stopProject(project)}
                                     onRemove={() => void removeProject(project)}
-                                    onOpenBrowser={() => void openInBrowser(project)}
-                                    onOpenFolder={() => void openInVSCode(project)}
+                                    onOpenVSCode={() => void openInVSCode(project)}
                                     onSave={saveProject}
                                     onMessage={announce}
                                 />

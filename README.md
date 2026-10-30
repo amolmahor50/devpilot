@@ -18,11 +18,11 @@ npm install
 npm run dev
 ```
 
-On first launch, add a project folder. Each project card includes Start and Stop controls, an environment URL editor, and an option to remove the project from DevPilot. Removing a project requires confirmation and does not delete its files. Starting a project opens its local app in your default browser when the configured port is ready. DevPilot stores its project list in Electron's application data directory. Project files remain at their original locations.
+On first launch, add a project folder. Each project card includes Start and Stop controls, an environment URL editor, and an option to remove the project from DevPilot. Use Stop all to stop every running project server together. Removing a project requires confirmation and does not delete its files. Starting a project opens its local app in your default browser when the configured port is ready. DevPilot stores its project list in Electron's application data directory. Project files remain at their original locations.
 
 ## Project configuration
 
-When adding a folder, DevPilot detects the `dev`, `start`, or `serve` script in `package.json` and selects npm, pnpm, yarn, or bun from its lockfile. Next.js projects prefer `start` when that script exists; other projects prefer `dev`. It also suggests the conventional Vite (5173), Next/React Scripts (3000), or Angular (4200) port when detectable. If that port is already in use, DevPilot selects and saves the next available port, passes it to supported frameworks, then opens the app in your default browser when ready. The fallback command is `npm run dev`; commands run with the project folder as their working directory. The environment file defaults to `.env`, and the URL key defaults to `VITE_API_BASE_URL`.
+When adding a folder, DevPilot detects the `dev`, `start`, or `serve` script in `package.json` and selects npm, pnpm, yarn, or bun from its lockfile. Next.js projects prefer `start` when that script exists; other projects prefer `dev`. Projects search for an available port starting at 5173, skipping DevPilot's own renderer and ports used by other running projects. DevPilot passes the selected port to the framework and opens that project's URL in your default browser when ready. The fallback command is `npm run dev`; commands run with the project folder as their working directory. The environment file defaults to `.env`, and the URL key defaults to `VITE_API_BASE_URL`.
 
 The environment switcher replaces only the selected assignment in place. Inline comments and unrelated environment lines are preserved. When a configured port is occupied, DevPilot selects the next available port and uses it to start the project.
 

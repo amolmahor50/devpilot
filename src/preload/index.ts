@@ -14,7 +14,6 @@ const api: DesktopAPI = {
     stopPortProcess: (port: number) => ipcRenderer.invoke('ports:stop-process', port),
     setBaseUrl: (id: string, value: string) => ipcRenderer.invoke('env:set-base-url', id, value),
     openProjectInVSCode: (id: string) => ipcRenderer.invoke('projects:open-vscode', id),
-    openUrl: (url: string) => ipcRenderer.invoke('app:open-url', url),
     onProjectStatus: (callback: (project: Project) => void) => {
         const listener = (_event: Electron.IpcRendererEvent, project: Project) => callback(project)
         ipcRenderer.on('project:status', listener)

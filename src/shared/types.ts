@@ -35,7 +35,6 @@ export interface DesktopAPI {
     stopPortProcess: (port: number) => Promise<{ ok: boolean; message?: string }>
     setBaseUrl: (id: string, value: string) => Promise<{ ok: boolean; message?: string }>
     openProjectInVSCode: (id: string) => Promise<void>
-    openUrl: (url: string) => Promise<void>
     onProjectStatus: (callback: (project: Project) => void) => () => void
     onProjectNotice: (callback: (event: { projectId: string; message: string }) => void) => () => void
 }

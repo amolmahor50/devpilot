@@ -82,6 +82,37 @@ export function useProjects(search: string) {
         }
     }
 
+    const stopAllProjects = async () => {
+        const projectsToStop = projects.filter(
+            (project) => project.status === 'running' || project.status === 'starting'
+        )
+        if (projectsToStop.length === 0) return
+
+        setBusyProjectId('all')
+        const results = await Promise.allSettled(
+            projectsToStop.map((project) => window.electronAPI.stopProject(project.id))
+        )
+        const failures = results.flatMap((result, index) => {
+            if (result.status === 'rejected') {
+                return [
+                    `${projectsToStop[index].name}: ${
+                        result.reason instanceof Error ? result.reason.message : 'Could not stop server.'
+                    }`
+                ]
+            }
+            return result.value.ok
+                ? []
+                : [`${projectsToStop[index].name}: ${result.value.message ?? 'Could not stop server.'}`]
+        })
+
+        setBusyProjectId(null)
+        if (failures.length > 0) {
+            announce(`Some servers could not be stopped. ${failures.join(' ')}`)
+            return
+        }
+        announce(`Stopped ${projectsToStop.length} project server${projectsToStop.length === 1 ? '' : 's'}.`)
+    }
+
     const removeProject = async (project: Project) => {
         const confirmed = window.confirm(
             `Remove "${project.name}" from DevPilot?\n\nThis won't delete any project files.${project.status === 'running' ? '\nThe running development server will be stopped.' : ''}`
@@ -98,23 +129,6 @@ export function useProjects(search: string) {
             announce(error instanceof Error ? error.message : `Could not remove ${project.name}.`)
         } finally {
             setBusyProjectId(null)
-        }
-    }
-
-    const openInBrowser = async (project: Project) => {
-        const url = project.port
-            ? `http://localhost:${project.port}`
-            : project.baseUrl && /^https?:\/\//i.test(project.baseUrl)
-              ? project.baseUrl
-              : null
-        if (!url) {
-            announce('Configure a local port or Base URL in project settings to open this project.')
-            return
-        }
-        try {
-            await window.electronAPI.openUrl(url)
-        } catch (error) {
-            announce(error instanceof Error ? error.message : 'Could not open URL in browser.')
         }
     }
 
@@ -142,8 +156,8 @@ export function useProjects(search: string) {
         addProject,
         startProject,
         stopProject,
+        stopAllProjects,
         removeProject,
-        openInBrowser,
         openInVSCode,
         saveProject
     }
