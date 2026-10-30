@@ -1,0 +1,1 @@
+Follow the repository-wide engineering and user-permission policy in `AGENTS.md` for every task. It is the canonical source of truth. Do not run Git commands or package operations without the user's explicit permission. Never inspect `.env` or other secret-bearing files. Keep the existing folder boundaries, Electron security model, and formatting/linting standards.

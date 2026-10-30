@@ -1,0 +1,6 @@
+---
+description: "Always apply the shared DevPilot repository engineering, security, privacy, and user-permission rules."
+alwaysApply: true
+---
+
+Follow the canonical repository instructions in [`../../AGENTS.md`](../../AGENTS.md) for every task. Do not define competing rules here.

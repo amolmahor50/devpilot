@@ -1,0 +1,10 @@
+node_modules/
+out/
+dist/
+release/
+coverage/
+package-lock.json
+*.min.js
+*.map
+**/.env
+**/.env.*
