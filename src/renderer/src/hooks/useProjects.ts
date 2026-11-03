@@ -58,6 +58,43 @@ export function useProjects(search: string) {
         }
     }
 
+    const reorderProjects = async (draggedId: string, targetId: string) => {
+        if (draggedId === targetId) return
+        const reordered = [...projects]
+        const draggedIndex = reordered.findIndex((project) => project.id === draggedId)
+        const targetIndex = reordered.findIndex((project) => project.id === targetId)
+        if (draggedIndex < 0 || targetIndex < 0) return
+
+        const [draggedProject] = reordered.splice(draggedIndex, 1)
+        const insertionIndex = reordered.findIndex((project) => project.id === targetId)
+        reordered.splice(insertionIndex, 0, draggedProject)
+        try {
+            let updatedProjects: Project[] = projects
+            for (const [order, project] of reordered.entries()) {
+                updatedProjects = await window.electronAPI.updateProject({ ...project, order })
+            }
+            setProjects(
+                reordered.map((project, order) => ({
+                    ...project,
+                    order,
+                    ...updatedProjects.find((updated) => updated.id === project.id)
+                }))
+            )
+        } catch (error) {
+            try {
+                setProjects(await window.electronAPI.listProjects())
+            } catch (reloadError) {
+                announce(
+                    reloadError instanceof Error
+                        ? `Could not reload projects after reordering failed: ${reloadError.message}`
+                        : 'Could not reload projects after reordering failed.'
+                )
+                return
+            }
+            announce(error instanceof Error ? error.message : 'Could not reorder projects.')
+        }
+    }
+
     const startProject = async (project: Project) => {
         setBusyProjectId(project.id)
         try {
@@ -154,6 +191,7 @@ export function useProjects(search: string) {
         setNotice,
         announce,
         addProject,
+        reorderProjects,
         startProject,
         stopProject,
         stopAllProjects,

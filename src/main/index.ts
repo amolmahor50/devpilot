@@ -143,7 +143,7 @@ async function openBrowserTarget(projectId: string, requestId: symbol, targetUrl
 }
 
 function findLocalServerUrl(output: string): { url: string; port: number } | undefined {
-    const matches = output.match(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d{1,5})?/gi)
+    const matches = output.match(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):\d{1,5}\b/gi)
     if (!matches) return undefined
 
     for (const match of matches) {
@@ -162,8 +162,16 @@ function findLocalServerUrl(output: string): { url: string; port: number } | und
 }
 
 function getProject(id: string): ProjectConfig {
-    const project = storedProjects().find((item) => item.id === id)
-    if (!project) throw new Error('Project not found.')
+    const projects = storedProjects()
+    const storedProject = projects.find((item) => item.id === id)
+    if (!storedProject) throw new Error('Project not found.')
+    const project = projectWithFrameworkEnvKey(storedProject)
+    if (project.envKey !== storedProject.envKey || project.baseUrl !== storedProject.baseUrl) {
+        store.set(
+            'projects',
+            projects.map((item) => (item.id === id ? project : item))
+        )
+    }
     return project
 }
 
@@ -274,6 +282,27 @@ function detectFramework(projectPath: string): ProjectFramework {
     return 'unknown'
 }
 
+function baseUrlEnvKey(framework: ProjectFramework): string {
+    if (framework === 'next') return 'NEXT_PUBLIC_API_BASE_URL'
+    if (framework === 'react-scripts') return 'REACT_APP_API_BASE_URL'
+    return 'VITE_API_BASE_URL'
+}
+
+function projectWithFrameworkEnvKey(project: ProjectConfig): ProjectConfig {
+    const currentKey = project.envKey || 'VITE_API_BASE_URL'
+    if (!['VITE_API_BASE_URL', 'NEXT_PUBLIC_API_BASE_URL', 'REACT_APP_API_BASE_URL'].includes(currentKey)) {
+        return project
+    }
+    const envKey = baseUrlEnvKey(detectFramework(project.path))
+    if (currentKey === envKey) return project
+
+    const updatedProject = { ...project, envKey }
+    return {
+        ...updatedProject,
+        baseUrl: readBaseUrl(updatedProject) || project.baseUrl
+    }
+}
+
 function commandForPort(command: string, port: number, framework: ProjectFramework): string {
     if (!['vite', 'next', 'angular', 'nuxt'].includes(framework)) return command
 
@@ -363,7 +392,14 @@ function createWindow(): void {
     })
 }
 
-ipcMain.handle('projects:list', () => storedProjects().map(statusOf))
+ipcMain.handle('projects:list', () => {
+    const projects = storedProjects()
+    const normalizedProjects = projects.map(projectWithFrameworkEnvKey)
+    if (normalizedProjects.some((project, index) => project !== projects[index])) {
+        store.set('projects', normalizedProjects)
+    }
+    return normalizedProjects.map(statusOf)
+})
 ipcMain.handle('projects:choose', async () => {
     const result = await dialog.showOpenDialog(mainWindow!, {
         properties: ['openDirectory', 'createDirectory'],
@@ -371,26 +407,23 @@ ipcMain.handle('projects:choose', async () => {
     })
     if (result.canceled || !result.filePaths[0]) return null
     const path = result.filePaths[0]
-    return {
+    const envKey = baseUrlEnvKey(detectFramework(path))
+    const project = {
         id: randomUUID(),
         name: basename(path),
         path,
         command: detectCommand(path),
         port: DEFAULT_PROJECT_PORT,
         envFile: '.env',
-        envKey: 'VITE_API_BASE_URL',
-        baseUrl: readBaseUrl({
-            id: '',
-            name: basename(path),
-            path,
-            command: '',
-            envFile: '.env',
-            envKey: 'VITE_API_BASE_URL'
-        })
+        envKey
+    }
+    return {
+        ...project,
+        baseUrl: readBaseUrl(project)
     } satisfies ProjectConfig
 })
 ipcMain.handle('projects:add', (_event, input: ProjectConfig) => {
-    const validated = validProject(input)
+    const validated = projectWithFrameworkEnvKey(validProject(input))
     const project = { ...validated, baseUrl: validated.baseUrl ?? readBaseUrl(validated) }
     if (storedProjects().some((item) => item.path.toLowerCase() === project.path.toLowerCase())) {
         throw new Error('This project folder is already in DevPilot.')
@@ -399,7 +432,7 @@ ipcMain.handle('projects:add', (_event, input: ProjectConfig) => {
     return storedProjects().map(statusOf)
 })
 ipcMain.handle('projects:update', (_event, input: ProjectConfig) => {
-    const project = validProject(input)
+    const project = projectWithFrameworkEnvKey(validProject(input))
     store.set(
         'projects',
         storedProjects().map((item) => (item.id === project.id ? project : item))
@@ -565,6 +598,7 @@ ipcMain.handle('env:set-base-url', (_event, id: string, value: string) => {
     const project = getProject(id)
     const filePath = resolve(project.path, project.envFile || '.env')
     const key = (project.envKey || 'VITE_API_BASE_URL').trim()
+    if (typeof value !== 'string') throw new Error('Base URL value must be text.')
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error('Invalid environment variable name.')
     if (/[\r\n]/.test(value)) throw new Error('Base URL cannot contain line breaks.')
     const original = existsSync(filePath) ? readFileSync(filePath, 'utf8') : ''

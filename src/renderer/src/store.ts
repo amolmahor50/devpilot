@@ -2,6 +2,17 @@
 import { create } from 'zustand'
 import type { Project } from '../../shared/types'
 
+function orderedProjects(projects: Project[]): Project[] {
+    return projects
+        .map((project, index) => ({ project, index }))
+        .sort((a, b) => {
+            if (a.project.order === undefined) return b.project.order === undefined ? a.index - b.index : 1
+            if (b.project.order === undefined) return -1
+            return a.project.order - b.project.order
+        })
+        .map(({ project }) => project)
+}
+
 interface ProjectStore {
     projects: Project[]
     activeProjectId: string | null
@@ -15,7 +26,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
     activeProjectId: null,
     setProjects: (projects) =>
         set((state) => ({
-            projects,
+            projects: orderedProjects(projects),
             activeProjectId:
                 state.activeProjectId && projects.some((project) => project.id === state.activeProjectId)
                     ? state.activeProjectId

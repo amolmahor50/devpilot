@@ -13,7 +13,11 @@ function ProjectCard({
     onRemove,
     onOpenVSCode,
     onSave,
-    onMessage
+    onMessage,
+    dragging,
+    onDragStart,
+    onDragEnd,
+    onDrop
 }: {
     project: Project
     busy: boolean
@@ -25,6 +29,10 @@ function ProjectCard({
     onOpenVSCode: () => void
     onSave: (project: ProjectConfig) => Promise<void>
     onMessage: (message: string) => void
+    dragging: boolean
+    onDragStart: (event: React.DragEvent<HTMLElement>) => void
+    onDragEnd: () => void
+    onDrop: (event: React.DragEvent<HTMLElement>) => void
 }) {
     const [urlDraft, setUrlDraft] = useState(project.baseUrl ?? '')
     const [saving, setSaving] = useState(false)
@@ -64,7 +72,14 @@ function ProjectCard({
     }
 
     return (
-        <article className="flex h-full min-w-0 flex-col rounded-2xl bg-secondary p-4 text-foreground transition duration-200 hover:bg-muted/70 sm:p-5">
+        <article
+            draggable
+            onDragStart={onDragStart}
+            onDragEnd={onDragEnd}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={onDrop}
+            className={`flex h-full min-w-0 flex-col rounded-2xl bg-secondary p-4 text-foreground transition duration-200 hover:bg-muted/70 sm:p-5 ${dragging ? 'opacity-40' : 'cursor-grab'}`}
+        >
             <div className="flex items-start justify-between gap-3">
                 <button
                     type="button"
@@ -93,11 +108,9 @@ function ProjectCard({
             </div>
 
             <div className="mt-4">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                    <span className="truncate font-mono text-[11px] text-muted-foreground">
-                        {project.envKey || 'VITE_API_BASE_URL'}
-                    </span>
-                </div>
+                <label htmlFor={inputId} className="mb-2 block font-mono text-[11px] text-muted-foreground">
+                    {project.envKey || 'VITE_API_BASE_URL'}
+                </label>
                 <div className="flex min-w-0 gap-2">
                     <input
                         id={inputId}
@@ -181,19 +194,21 @@ function ProjectCard({
                     <button
                         type="button"
                         onClick={onOpenVSCode}
-                        className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        className="inline-flex size-9 items-center justify-center rounded-lg border border-border bg-background text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        title="Open in VS Code"
+                        aria-label={`Open ${project.name} in VS Code`}
                     >
                         <Code2 size={15} />
-                        Open in VS Code
                     </button>
                     <button
                         type="button"
                         disabled={busy}
                         onClick={onRemove}
-                        className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-red-600 px-3 text-sm font-medium text-white transition-colors hover:bg-red-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                        className="inline-flex size-9 items-center justify-center rounded-lg bg-red-600 text-white transition-colors hover:bg-red-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                        title="Delete project"
+                        aria-label={`Delete ${project.name}`}
                     >
                         <Trash2 size={15} />
-                        Delete
                     </button>
                 </div>
             </div>
@@ -217,6 +232,7 @@ function BrandMark() {
 
 function App() {
     const [search, setSearch] = useState('')
+    const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null)
     const {
         projects,
         filteredProjects,
@@ -227,6 +243,7 @@ function App() {
         setNotice,
         announce,
         addProject,
+        reorderProjects,
         startProject,
         stopProject,
         stopAllProjects,
@@ -288,9 +305,26 @@ function App() {
                     </div>
                 </section>
 
+                {notice && (
+                    <div
+                        role="status"
+                        className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm text-foreground"
+                    >
+                        <span className="flex-1">{notice}</span>
+                        <button
+                            type="button"
+                            className="rounded-md p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            onClick={() => setNotice('')}
+                            aria-label="Dismiss notification"
+                        >
+                            <X size={14} />
+                        </button>
+                    </div>
+                )}
+
                 {filteredProjects.length > 0 && (
                     <section aria-label="Projects">
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                             {filteredProjects.map((project) => (
                                 <ProjectCard
                                     key={project.id}
@@ -304,6 +338,19 @@ function App() {
                                     onOpenVSCode={() => void openInVSCode(project)}
                                     onSave={saveProject}
                                     onMessage={announce}
+                                    dragging={draggedProjectId === project.id}
+                                    onDragStart={(event) => {
+                                        event.dataTransfer.effectAllowed = 'move'
+                                        event.dataTransfer.setData('text/plain', project.id)
+                                        setDraggedProjectId(project.id)
+                                    }}
+                                    onDragEnd={() => setDraggedProjectId(null)}
+                                    onDrop={(event) => {
+                                        event.preventDefault()
+                                        const draggedId = event.dataTransfer.getData('text/plain')
+                                        setDraggedProjectId(null)
+                                        void reorderProjects(draggedId, project.id)
+                                    }}
                                 />
                             ))}
                         </div>
@@ -338,24 +385,6 @@ function App() {
                     </section>
                 )}
             </main>
-
-            {notice && (
-                <div
-                    role="status"
-                    className="fixed bottom-5 right-5 z-40 max-w-md rounded-xl border border-border bg-card px-4 py-3 text-sm text-foreground shadow-lg"
-                >
-                    <div className="flex items-center gap-3">
-                        <span className="flex-1">{notice}</span>
-                        <button
-                            className="rounded-md p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                            onClick={() => setNotice('')}
-                            aria-label="Dismiss notification"
-                        >
-                            <X size={14} />
-                        </button>
-                    </div>
-                </div>
-            )}
         </div>
     )
 }

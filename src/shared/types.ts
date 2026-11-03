@@ -6,6 +6,7 @@ export interface Project {
     path: string
     command: string
     port?: number
+    order?: number
     envFile?: string
     envKey?: string
     baseUrl?: string
