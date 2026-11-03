@@ -26,7 +26,7 @@ When adding a folder, DevPilot detects the `dev`, `start`, or `serve` script in 
 
 The base URL input updates the project's configured environment variable. Inline comments and unrelated environment lines are preserved. When a configured port is occupied, DevPilot selects the next available port and uses it to start the project.
 
-## Security and process behavior
+## Security and process behavior.
 
 - Renderer access to system functionality is limited to the typed APIs exposed by the preload script. Context isolation is enabled and Node integration is disabled.
 - Project commands run in an interactive pseudo-terminal using `node-pty`.
