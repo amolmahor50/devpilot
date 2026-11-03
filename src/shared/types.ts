@@ -46,8 +46,7 @@ declare global {
     }
 }
 
-export type CreateAccountProps = {
-    name: string
+export type LoginProps = {
     email: string
     password: string
 }

@@ -1,12 +1,11 @@
 import { useState } from 'react'
-import { CreateAccountProps } from './types'
+import { LoginProps } from './types'
 
 export default function login() {
-    const [formData, setFormData] = useState<CreateAccountProps>({
-        name: '',
+    const [formData, setFormData] = useState<LoginProps>({
         email: '',
         password: ''
     })
 
-    return <div>Login</div>
+    return <div>login</div>
 }
