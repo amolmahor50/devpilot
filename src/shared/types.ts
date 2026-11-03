@@ -45,3 +45,8 @@ declare global {
         electronAPI: DesktopAPI
     }
 }
+
+export type LoginProps = {
+    email: string
+    password: string
+}
